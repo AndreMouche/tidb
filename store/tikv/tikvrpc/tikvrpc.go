@@ -15,11 +15,16 @@ package tikvrpc
 
 import (
 	"fmt"
+	"io"
 
+	log "github.com/Sirupsen/logrus"
+	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -50,6 +55,88 @@ const (
 	CmdMvccGetByStartTs
 	CmdSplitRegion
 )
+
+// CopResponse totot
+type CopResponse struct {
+	First    coprocessor.Response
+	stream   tikvpb.Tikv_CoprocessorStreamClient
+	id       int
+	finished bool
+}
+
+// NewCopResponse totototot
+func NewCopResponse(stream tikvpb.Tikv_CoprocessorStreamClient) (*CopResponse, error) {
+	res := &CopResponse{
+		stream:   stream,
+		id:       0,
+		finished: false,
+	}
+	first, err := res.Next()
+	res.First = *first
+	return res, err
+}
+
+func (self *CopResponse) Next() (*coprocessor.Response, error) {
+	if self.finished {
+		return nil, nil
+	}
+	self.id += 1
+	s, err := self.stream.Recv()
+	if err == io.EOF {
+		//log.Warn("finished an stream", self.id)
+		self.finished = true
+		if self.id == 1 {
+			b, err := proto.Marshal(&tipb.SelectResponse{})
+			if err != nil {
+				return nil, err
+			}
+			return &coprocessor.Response{Data: b}, nil
+		}
+		return nil, nil
+	}
+	if err != nil {
+		log.Warn("meet error", err)
+		self.finished = true
+		return nil, err
+	}
+
+	//log.Warn("Get a new stream,", self.id)
+	return s, err
+}
+
+//NewCopResponse...
+func NewCopResponse2(stream tikvpb.Tikv_CoprocessorStreamClient) (*coprocessor.Response, error) {
+	resp := &tipb.SelectResponse{}
+	id := 0
+	for {
+		id += 1
+		s, err := stream.Recv()
+		if err == io.EOF {
+			log.Warn("finished an stream", id)
+			break
+		}
+		if err != nil {
+			log.Warn(err)
+			return nil, err
+		}
+		if s.GetLocked() != nil || s.GetOtherError() != "" || s.GetRegionError() != nil {
+			return s, nil
+		}
+		sp := new(tipb.SelectResponse)
+		err = proto.Unmarshal(s.Data, sp)
+		if err != nil {
+			return nil, err
+		}
+		log.Warn("append on stream lalala", id)
+		resp.Chunks = append(resp.Chunks, sp.Chunks...)
+	}
+
+	b, err := proto.Marshal(resp)
+	if err != nil {
+		return nil, err
+	}
+	return &coprocessor.Response{Data: b}, nil
+}
 
 // Request wraps all kv/coprocessor requests.
 type Request struct {
@@ -94,7 +181,7 @@ type Response struct {
 	RawPut           *kvrpcpb.RawPutResponse
 	RawDelete        *kvrpcpb.RawDeleteResponse
 	RawScan          *kvrpcpb.RawScanResponse
-	Cop              *coprocessor.Response
+	Cop              *CopResponse
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyResponse
 	MvccGetByStartTS *kvrpcpb.MvccGetByStartTsResponse
 	SplitRegion      *kvrpcpb.SplitRegionResponse
@@ -219,8 +306,9 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 			RegionError: e,
 		}
 	case CmdCop:
-		resp.Cop = &coprocessor.Response{
+		resp.Cop = &CopResponse{First: coprocessor.Response{
 			RegionError: e,
+		},
 		}
 	case CmdMvccGetByKey:
 		resp.MvccGetByKey = &kvrpcpb.MvccGetByKeyResponse{
@@ -275,7 +363,7 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 	case CmdRawScan:
 		e = resp.RawScan.GetRegionError()
 	case CmdCop:
-		e = resp.Cop.GetRegionError()
+		e = resp.Cop.First.GetRegionError()
 	case CmdMvccGetByKey:
 		e = resp.MvccGetByKey.GetRegionError()
 	case CmdMvccGetByStartTs:

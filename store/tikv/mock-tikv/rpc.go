@@ -575,7 +575,7 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 	case tikvrpc.CmdCop:
 		r := req.Cop
 		if err := handler.checkRequestContext(reqCtx); err != nil {
-			resp.Cop = &coprocessor.Response{RegionError: err}
+			resp.Cop = &tikvrpc.CopResponse{First: coprocessor.Response{RegionError: err}}
 			return resp, nil
 		}
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
@@ -586,7 +586,7 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 		} else {
 			res = handler.handleCopAnalyzeRequest(r)
 		}
-		resp.Cop = res
+		resp.Cop = &tikvrpc.CopResponse{First: *res}
 	case tikvrpc.CmdMvccGetByKey:
 		r := req.MvccGetByKey
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {

@@ -128,7 +128,8 @@ type copTask struct {
 	region RegionVerID
 	ranges *copRanges
 
-	respChan  chan copResponse
+	respChan  chan streamResponse
+	curChan   *streamResponse
 	storeAddr string
 }
 
@@ -238,7 +239,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		tasks = append(tasks, &copTask{
 			region:   region,
 			ranges:   ranges,
-			respChan: make(chan copResponse, 1),
+			respChan: make(chan streamResponse, 1),
 		})
 	}
 
@@ -321,6 +322,11 @@ type copResponse struct {
 	err error
 }
 
+type streamResponse struct {
+	stream *tikvrpc.CopResponse
+	err    error
+}
+
 const minLogCopTaskTime = 300 * time.Millisecond
 
 // work is a worker function that get a copTask from channel, handle it and
@@ -339,24 +345,40 @@ func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 		if bo.totalSleep > 0 {
 			backoffHistogram.Observe(float64(bo.totalSleep) / 1000)
 		}
-		var ch chan copResponse
-		if !it.req.KeepOrder {
-			ch = it.respChan
-		} else {
-			ch = task.respChan
-		}
 
-		for _, resp := range resps {
-			select {
-			case ch <- resp:
-			case <-ctx.Done():
-				return
-			case <-it.finished:
-				return
+		for _, stream := range resps {
+			if it.req.KeepOrder {
+				select {
+				case task.respChan <- stream:
+				case <-ctx.Done():
+					return
+				case <-it.finished:
+					return
+				}
+				close(task.respChan)
+				continue
 			}
-		}
-		if it.req.KeepOrder {
-			close(ch)
+			resp := copResponse{&stream.stream.First, nil}
+
+			for {
+				select {
+				case it.respChan <- resp:
+				case <-ctx.Done():
+					return
+				case <-it.finished:
+					return
+				}
+				re, err := stream.stream.Next()
+				if err != nil {
+					resp = copResponse{err: errors.Trace(err)}
+					log.Warn("mett recv error:", err)
+					continue
+				}
+				if re == nil {
+					break
+				}
+				resp = copResponse{re,nil}
+			}
 		}
 	}
 }
@@ -427,10 +449,26 @@ func (it *copIterator) Next() ([]byte, error) {
 				return nil, nil
 			}
 			task := it.tasks[it.curr]
-			resp, ok = <-task.respChan
-			if ok {
-				break
+			if task.curChan == nil {
+				var curChan streamResponse
+				curChan, ok = <-task.respChan
+				if ok {
+					task.curChan = &curChan
+					resp = copResponse{&task.curChan.stream.First, nil}
+					break
+				}
+			} else {
+				s, err := task.curChan.stream.Next()
+				if err != nil {
+					log.Warn("meet err", err)
+				}
+				if s != nil {
+					resp = copResponse{s, err}
+					log.Warn("get one stream", it.curr)
+					break
+				}
 			}
+
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
@@ -453,7 +491,7 @@ func (it *copIterator) Next() ([]byte, error) {
 }
 
 // handleTask handles single copTask.
-func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
+func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []streamResponse {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
 	sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
 	for {
@@ -477,54 +515,57 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 			},
 		}
 		resp, err := sender.SendReq(bo, req, task.region, readTimeoutMedium)
+
 		if err != nil {
-			return []copResponse{{err: errors.Trace(err)}}
+			return []streamResponse{{err: errors.Trace(err)}}
 		}
-		if regionErr := resp.Cop.GetRegionError(); regionErr != nil {
+		if regionErr := resp.Cop.First.GetRegionError(); regionErr != nil {
 			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return []copResponse{{err: errors.Trace(err)}}
+				return []streamResponse{{err: errors.Trace(err)}}
 			}
 			return it.handleRegionErrorTask(bo, task)
 		}
-		if e := resp.Cop.GetLocked(); e != nil {
+		if e := resp.Cop.First.GetLocked(); e != nil {
 			log.Debugf("coprocessor encounters lock: %v", e)
 			ok, err1 := it.store.lockResolver.ResolveLocks(bo, []*Lock{newLock(e)})
 			if err1 != nil {
-				return []copResponse{{err: errors.Trace(err1)}}
+				return []streamResponse{{err: errors.Trace(err1)}}
 			}
 			if !ok {
 				err = bo.Backoff(boTxnLockFast, errors.New(e.String()))
 				if err != nil {
-					return []copResponse{{err: errors.Trace(err)}}
+					return []streamResponse{{err: errors.Trace(err)}}
 				}
 			}
 			continue
 		}
-		if e := resp.Cop.GetOtherError(); e != "" {
+		if e := resp.Cop.First.GetOtherError(); e != "" {
 			err = errors.Errorf("other error: %s", e)
 			log.Warnf("coprocessor err: %v", err)
-			return []copResponse{{err: errors.Trace(err)}}
+			return []streamResponse{{err: errors.Trace(err)}}
 		}
+
 		task.storeAddr = sender.storeAddr
-		return []copResponse{{Response: resp.Cop}}
+
+		return []streamResponse{{stream: resp.Cop}}
 	}
 }
 
 // handleRegionErrorTask handles current task. It may be split into multiple tasks (in region split scenario).
-func (it *copIterator) handleRegionErrorTask(bo *Backoffer, task *copTask) []copResponse {
+func (it *copIterator) handleRegionErrorTask(bo *Backoffer, task *copTask) []streamResponse {
 	coprocessorCounter.WithLabelValues("rebuild_task").Inc()
 
 	newTasks, err := buildCopTasks(bo, it.store.regionCache, task.ranges, it.req.Desc)
 	if err != nil {
-		return []copResponse{{err: errors.Trace(err)}}
+		return []streamResponse{{err: errors.Trace(err)}}
 	}
 	if newTasks == nil {
 		// TODO: check this, this should never happen.
 		return nil
 	}
 
-	var ret []copResponse
+	var ret []streamResponse
 	for _, t := range newTasks {
 		resp := it.handleTask(bo, t)
 		ret = append(ret, resp...)

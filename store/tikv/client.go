@@ -221,7 +221,11 @@ func (c *rpcClient) callRPC(ctx goctx.Context, client tikvpb.TikvClient, req *ti
 	case tikvrpc.CmdRawScan:
 		resp.RawScan, err = client.RawScan(ctx, req.RawScan)
 	case tikvrpc.CmdCop:
-		resp.Cop, err = client.Coprocessor(ctx, req.Cop)
+		var stream tikvpb.Tikv_CoprocessorStreamClient
+		stream, err = client.CoprocessorStream(goctx.TODO(), req.Cop)
+		if err == nil {
+			resp.Cop, err = tikvrpc.NewCopResponse(stream)
+		}
 	case tikvrpc.CmdMvccGetByKey:
 		resp.MvccGetByKey, err = client.MvccGetByKey(ctx, req.MvccGetByKey)
 	case tikvrpc.CmdMvccGetByStartTs:
