@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
 )
 
@@ -551,7 +552,12 @@ func (rh *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interfac
 }
 
 func (t *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	encodeKey := tablecodec.EncodeRowKeyWithHandle(tableID, recordID)
+	//encodeKey := tablecodec.EncodeRowKeyWithHandle(tableID, recordID)
+	tableID = 1401
+	val := types.Datum{}
+	val.SetString("2017111718022715109129471347560")
+	idxID := int64(2)
+	encodeKey := tablecodec.EncodeIndexSeekKey(tableID, idxID, val.GetBytes())
 	keyLocation, err := t.regionCache.LocateKey(t.bo, encodeKey)
 	if err != nil {
 		return nil, err
