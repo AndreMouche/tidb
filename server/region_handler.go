@@ -553,11 +553,14 @@ func (rh *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interfac
 
 func (t *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	//encodeKey := tablecodec.EncodeRowKeyWithHandle(tableID, recordID)
-	tableID = 1401
+	tableID = 29
 	idxID := int64(1)
-	val := types.NewStringDatum("re_QbECkRSan1uSCAWDscowoiBL0")
+	handle := int64(113)
+	val := types.NewIntDatum(1489614385556736757)
 	idxVal, _ := codec.EncodeKey(nil, val)
 	encodeKey := tablecodec.EncodeIndexSeekKey(tableID, idxID, idxVal)
+	encodeKey = codec.EncodeInt(encodeKey, handle)
+
 	keyLocation, err := t.regionCache.LocateKey(t.bo, encodeKey)
 	if err != nil {
 		return nil, err
