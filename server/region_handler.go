@@ -559,7 +559,7 @@ func (t *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrpcpb
 	val := types.NewIntDatum(1489614385556736757)
 	idxVal, _ := codec.EncodeKey(nil, val)
 	encodeKey := tablecodec.EncodeIndexSeekKey(tableID, idxID, idxVal)
-	encodeKey = codec.EncodeInt(encodeKey, handle)
+	encodeKey, _ = codec.EncodeKey(encodeKey, types.NewIntDatum(handle))
 
 	keyLocation, err := t.regionCache.LocateKey(t.bo, encodeKey)
 	if err != nil {
