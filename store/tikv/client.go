@@ -28,7 +28,8 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
-	"google.golang.org/grpc")
+	"google.golang.org/grpc"
+)
 
 // Timeout durations.
 const (
@@ -57,12 +58,14 @@ type Client interface {
 type connArray struct {
 	index uint32
 	v     []*grpc.ClientConn
+	conns []int64
 }
 
 func newConnArray(maxSize uint32, addr string) (*connArray, error) {
 	a := &connArray{
 		index: 0,
 		v:     make([]*grpc.ClientConn, maxSize),
+		conns: make([]int64,maxSize,maxSize),
 	}
 	if err := a.Init(addr); err != nil {
 		return nil, err
@@ -99,9 +102,9 @@ func (a *connArray) Init(addr string) error {
 	return nil
 }
 
-func (a *connArray) Get() *grpc.ClientConn {
+func (a *connArray) Get() (*grpc.ClientConn,*int64) {
 	next := atomic.AddUint32(&a.index, 1) % uint32(len(a.v))
-	return a.v[next]
+	return a.v[next],&a.conns[next]
 }
 
 func (a *connArray) Close() {
@@ -127,17 +130,18 @@ type rpcClient struct {
 }
 
 func newRPCClient() *rpcClient {
-	go debugReqCount()
-	return &rpcClient{
+	client := &rpcClient{
 		conns: make(map[string]*connArray),
 	}
+	go client.debugReqCount()
+	return client
 }
 
-func (c *rpcClient) getConn(addr string) (*grpc.ClientConn, error) {
+func (c *rpcClient) getConn(addr string) (*grpc.ClientConn, *int64, error) {
 	c.RLock()
 	if c.isClosed {
 		c.RUnlock()
-		return nil, errors.Errorf("rpcClient is closed")
+		return nil,nil, errors.Errorf("rpcClient is closed")
 	}
 	array, ok := c.conns[addr]
 	c.RUnlock()
@@ -145,10 +149,11 @@ func (c *rpcClient) getConn(addr string) (*grpc.ClientConn, error) {
 		var err error
 		array, err = c.createConnArray(addr)
 		if err != nil {
-			return nil, err
+			return nil,nil, err
 		}
 	}
-	return array.Get(), nil
+	con,count:=array.Get()
+	return con,count, nil
 }
 
 func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
@@ -180,9 +185,14 @@ func (c *rpcClient) closeConns() {
 
 var grpcReqCount int64
 
-func debugReqCount() {
+func (c *rpcClient)debugReqCount() {
 	for {
 		log.Errorf("GRPCReqCount:%v", atomic.LoadInt64(&grpcReqCount))
+		c.RLock()
+		for add,v :=range c.conns{
+			log.Errorf("GRPCReqCount:%+v,%+v",add,v.conns)
+		}
+		c.RUnlock()
 		time.Sleep(10 * time.Second)
 	}
 }
@@ -200,11 +210,13 @@ func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 		sendReqHistogram.WithLabelValues(label).Observe(time.Since(start).Seconds())
 	}()
 
-	conn, err := c.getConn(addr)
+	conn, count,err := c.getConn(addr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	atomic.AddInt64(count,1)
 	client := tikvpb.NewTikvClient(conn)
+	atomic.AddInt64(count, -1)
 	resp, err := c.callRPC(ctx, client, req)
 	if err != nil {
 		return nil, errors.Trace(err)
