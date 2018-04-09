@@ -1,7 +1,6 @@
 package tikv
 
 import (
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/store/tikv/latch"
 	binlog "github.com/pingcap/tipb/go-binlog"
@@ -14,11 +13,22 @@ type txnCommiter struct {
 	commiter *twoPhaseCommitter
 	ch       chan error
 	ctx      context.Context
-	lock     latch.Lock
+	commitTs uint64
+	lock latch.Lock
 }
 
-func (txn *txnCommiter) execute(timeout bool) (commitTs uint64) {
-	commitTs = uint64(0)
+func (txn *txnCommiter) StartTs()uint64{
+	return txn.commiter.startTS
+}
+
+func (txn *txnCommiter) CommitTs()uint64 {
+	return txn.commitTs
+}
+
+func (txn *txnCommiter) GetLock()*latch.Lock{
+	return &txn.lock
+}
+func (txn *txnCommiter) execute(timeout bool) {
 	if timeout {
 		err := errors.Errorf("startTs %d timeout", txn.commiter.startTS)
 		log.Warn(txn.commiter.connID, err)
@@ -31,24 +41,22 @@ func (txn *txnCommiter) execute(timeout bool) (commitTs uint64) {
 	if err != nil {
 		txn.commiter.writeFinishBinlog(binlog.BinlogType_Rollback, 0)
 	} else {
-		commitTs = txn.commiter.commitTS
-		txn.commiter.writeFinishBinlog(binlog.BinlogType_Commit, int64(commitTs))
+		txn.commitTs = txn.commiter.commitTS
+		txn.commiter.writeFinishBinlog(binlog.BinlogType_Commit, int64(txn.commitTs))
 	}
 	txn.ch <- errors.Trace(err)
-	log.Debug(txn.commiter.connID, "finish txn with startTs:", txn.commiter.startTS, " commitTs:", commitTs, " error:", err)
-	return commitTs
+	log.Debug(txn.commiter.connID, "finish txn with startTs:", txn.commiter.startTS, " commitTs:", txn.commitTs, " error:", err)
+	return
 }
 
 type txnStore struct {
 	latches latch.Latches
-	txns    map[uint64]*txnCommiter
 	sync.RWMutex
 }
 
 func newTxnStore() txnStore {
 	return txnStore{
 		latch.NewLatches(1024000), //TODO
-		make(map[uint64]*txnCommiter),
 		sync.RWMutex{},
 	}
 }
@@ -59,15 +67,16 @@ func (store *txnStore) execute(ctx context.Context, txn *tikvTxn, connID uint64)
 		return errors.Trace(err)
 	}
 	ch := make(chan error)
-	lock := store.latches.GenLock(commiter.startTS, commiter.keys)
-	store.putTxn(&txnCommiter{
+	lock := store.latches.GenLock(commiter.keys)
+	t := &txnCommiter{
 		commiter,
 		ch,
 		ctx,
+		0,
 		lock,
-	})
+	}
 
-	go store.run(commiter.startTS)
+	go store.run(t)
 	err = errors.Trace(<-ch)
 	if err == nil {
 		txn.commitTS = commiter.commitTS
@@ -75,38 +84,16 @@ func (store *txnStore) execute(ctx context.Context, txn *tikvTxn, connID uint64)
 	return err
 }
 
-func (store *txnStore) getTxn(startTs uint64) (*txnCommiter, bool) {
-	store.RLock()
-	defer store.RUnlock()
-	c, ok := store.txns[startTs]
-	return c, ok
-}
-
-func (store *txnStore) putTxn(txn *txnCommiter) {
-	store.Lock()
-	defer store.Unlock()
-	if _, ok := store.txns[txn.commiter.startTS]; ok {
-		panic(fmt.Sprintf("The startTs %d shouldn't used in two transaction", txn.commiter.startTS))
-	}
-	store.txns[txn.commiter.startTS] = txn
-}
-
-func (store *txnStore) run(startTs uint64) {
-	txn, ok := store.getTxn(startTs)
-	if !ok {
-		panic(startTs)
-	}
-	acquired, timeout := store.latches.Acquire(&txn.lock)
+func (store *txnStore) run(txn *txnCommiter) {
+	acquired, timeout := store.latches.Acquire(txn)
 	if !timeout && !acquired {
 		// wait for next wakeup
 		return
 	}
-	commitTs := txn.execute(timeout)
-	wakeupList := store.latches.Release(&txn.lock, commitTs)
+	txn.execute(timeout)
+	wakeupList := store.latches.Release(txn)
 	for _, s := range wakeupList {
-		go store.run(s)
+		t := s.(*txnCommiter)
+		go store.run(t)
 	}
-	store.Lock()
-	defer store.Unlock()
-	delete(store.txns, startTs)
 }
