@@ -34,7 +34,7 @@ type txnCommiter struct {
 func (txn *txnCommiter) execute(timeout bool) (commitTS uint64) {
 	commitTS = uint64(0)
 	if timeout {
-		err := errors.Errorf("startTs %d timeout", txn.commiter.startTS)
+		err := errors.Errorf("startTS %d timeout", txn.commiter.startTS)
 		log.Warn(txn.commiter.connID, err)
 		txn.ch <- errors.Annotate(err, txnRetryableMark)
 		return
@@ -49,20 +49,48 @@ func (txn *txnCommiter) execute(timeout bool) (commitTS uint64) {
 		txn.commiter.writeFinishBinlog(binlog.BinlogType_Commit, int64(commitTS))
 	}
 	txn.ch <- errors.Trace(err)
-	log.Debug(txn.commiter.connID, "finish txn with startTs:", txn.commiter.startTS, " commitTS:", commitTS, " error:", err)
+	log.Debug(txn.commiter.connID, "finish txn with startTS:", txn.commiter.startTS, " commitTS:", commitTS, " error:", err)
 	return commitTS
+}
+
+type txnMap struct {
+	txns map[uint64]*txnCommiter
+	sync.RWMutex
+}
+
+func (t *txnMap) put(startTS uint64, txn *txnCommiter) {
+	t.Lock()
+	defer t.Unlock()
+	if t.txns == nil {
+		t.txns = make(map[uint64]*txnCommiter)
+	}
+	if _, ok := t.txns[startTS]; ok {
+		panic(fmt.Sprintf("The startTS %d shouldn't be used in two transaction", txn.commiter.startTS))
+	}
+	t.txns[startTS] = txn
+}
+
+func (t *txnMap) get(startTS uint64) *txnCommiter {
+	t.RLock()
+	defer t.RUnlock()
+	return t.txns[startTS]
+}
+
+func (t *txnMap) delete(startTS uint64) {
+	t.Lock()
+	defer t.Unlock()
+	delete(t.txns, startTS)
 }
 
 type txnScheduler struct {
 	latches latch.Latches
-	txns    map[uint64]*txnCommiter
-	sync.RWMutex
+	txns    []txnMap
 }
 
 func newTxnScheduler() txnScheduler {
 	return txnScheduler{
 		latches: latch.NewLatches(1024000), //TODO
-		txns:    make(map[uint64]*txnCommiter),
+		txns:    make([]txnMap, 256, 256),
 	}
 }
 
@@ -71,9 +99,9 @@ func (store *txnScheduler) execute(ctx context.Context, txn *tikvTxn, connID uin
 	if err != nil || commiter == nil {
 		return errors.Trace(err)
 	}
-	ch := make(chan error)
+	ch := make(chan error, 1)
 	lock := store.latches.GenLock(commiter.startTS, commiter.keys)
-	store.putTxn(&txnCommiter{
+	store.getMap(txn.startTS).put(txn.startTS, &txnCommiter{
 		commiter,
 		ch,
 		ctx,
@@ -88,25 +116,14 @@ func (store *txnScheduler) execute(ctx context.Context, txn *tikvTxn, connID uin
 	return err
 }
 
-func (store *txnScheduler) getTxn(startTs uint64) (*txnCommiter, bool) {
-	store.RLock()
-	defer store.RUnlock()
-	c, ok := store.txns[startTs]
-	return c, ok
-}
-
-func (store *txnScheduler) putTxn(txn *txnCommiter) {
-	store.Lock()
-	defer store.Unlock()
-	if _, ok := store.txns[txn.commiter.startTS]; ok {
-		panic(fmt.Sprintf("The startTS %d shouldn't be used in two transaction", txn.commiter.startTS))
-	}
-	store.txns[txn.commiter.startTS] = txn
+func (store *txnScheduler) getMap(startTS uint64) *txnMap {
+	id := int(startTS % uint64(len(store.txns)))
+	return &store.txns[id]
 }
 
 func (store *txnScheduler) run(startTS uint64) {
-	txn, ok := store.getTxn(startTS)
-	if !ok {
+	txn := store.getMap(startTS).get(startTS)
+	if txn == nil {
 		panic(startTS)
 	}
 	acquired, timeout := store.latches.Acquire(&txn.lock)
@@ -119,7 +136,5 @@ func (store *txnScheduler) run(startTS uint64) {
 	for _, s := range wakeupList {
 		go store.run(s)
 	}
-	store.Lock()
-	defer store.Unlock()
-	delete(store.txns, startTS)
+	store.getMap(startTS).delete(startTS)
 }
