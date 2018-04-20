@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/latch"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -128,7 +129,7 @@ type tikvStore struct {
 	pdClient     pd.Client
 	regionCache  *RegionCache
 	lockResolver *LockResolver
-	txnScheduler *txnScheduler
+	txnLatches   *latch.LatchesScheduler
 	gcWorker     GCHandler
 	etcdAddrs    []string
 	tlsConfig    *tls.Config
@@ -185,7 +186,11 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		closed:      make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
-	store.txnScheduler = newTxnScheduler(enableTxnLocalLatches)
+	if enableTxnLocalLatches {
+		store.txnLatches = latch.NewLatchesScheduler(102400)
+	} else {
+		store.txnLatches = nil
+	}
 	store.enableGC = enableGC
 
 	go store.runSafePointChecker()

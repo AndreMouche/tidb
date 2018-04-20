@@ -55,24 +55,21 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	startTSB, lockB := s.newLock(keysB)
 
 	// A acquire lock success.
-	acquired, stale := s.latches.Acquire(lockA)
-	c.Assert(stale, IsFalse)
-	c.Assert(acquired, IsTrue)
+	result := s.latches.Acquire(lockA)
+	c.Assert(result, Equals, AcquireSuccess)
 
 	// B acquire lock failed.
-	acquired, stale = s.latches.Acquire(lockB)
-	c.Assert(stale, IsFalse)
-	c.Assert(acquired, IsFalse)
+	result = s.latches.Acquire(lockB)
+	c.Assert(result, Equals, AcquireLocked)
 
 	// A release lock, and get wakeup list.
 	commitTSA := getTso()
 	wakeupList := s.latches.Release(lockA, commitTSA)
-	c.Assert(wakeupList[0], Equals, startTSB)
+	c.Assert(wakeupList[0].startTS, Equals, startTSB)
 
 	// B acquire failed since startTSB has stale for some keys.
-	acquired, stale = s.latches.Acquire(lockB)
-	c.Assert(stale, IsTrue)
-	c.Assert(acquired, IsFalse)
+	result = s.latches.Acquire(lockB)
+	c.Assert(result, Equals, AcquireStale)
 
 	// B release lock since it received a stale.
 	wakeupList = s.latches.Release(lockB, 0)
@@ -81,7 +78,6 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	// B restart:get a new startTS.
 	startTSB = getTso()
 	lockB = s.latches.GenLock(startTSB, keysB)
-	acquired, stale = s.latches.Acquire(lockB)
-	c.Assert(acquired, IsTrue)
-	c.Assert(stale, IsFalse)
+	result = s.latches.Acquire(lockB)
+	c.Assert(result, Equals, AcquireSuccess)
 }
