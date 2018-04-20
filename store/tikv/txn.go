@@ -200,8 +200,11 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 	// for transactions which need to acquire latches
 	lock := txn.store.txnLatches.Lock(committer.startTS, committer.keys)
-	commitTS := uint64(0)
 	defer func() {
+		commitTS := uint64(0)
+		if err == nil {
+			commitTS = committer.commitTS
+		}
 		txn.store.txnLatches.UnLock(lock, commitTS)
 	}()
 	if lock.IsStale() {

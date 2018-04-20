@@ -282,6 +282,10 @@ func (s *tikvStore) Close() error {
 	if err := s.client.Close(); err != nil {
 		return errors.Trace(err)
 	}
+
+	if s.txnLatches != nil {
+		s.txnLatches.Close()
+	}
 	return nil
 }
 
