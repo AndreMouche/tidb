@@ -16,7 +16,6 @@ package unionstore
 import (
 	"context"
 
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
@@ -72,14 +71,14 @@ func (us *KVUnionStore) GetMemBuffer() *MemDB {
 // Get implements the Retriever interface.
 func (us *KVUnionStore) Get(ctx context.Context, k []byte) ([]byte, error) {
 	v, err := us.memBuffer.Get(k)
-	if tidbkv.IsErrNotFound(err) {
+	if kv.IsErrNotFound(err) {
 		v, err = us.snapshot.Get(ctx, k)
 	}
 	if err != nil {
 		return v, err
 	}
 	if len(v) == 0 {
-		return nil, tidbkv.ErrNotExist
+		return nil, kv.ErrNotExist
 	}
 	return v, nil
 }

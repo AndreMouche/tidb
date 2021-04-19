@@ -14,6 +14,9 @@
 package kv
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -49,6 +52,8 @@ var (
 	ErrTokenLimit                  = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVStoreLimit)
 	ErrLockExpire                  = dbterror.ClassTiKV.NewStd(mysql.ErrLockExpire)
 	ErrUnknown                     = dbterror.ClassTiKV.NewStd(mysql.ErrUnknown)
+
+	ErrNotExist = NewError(mysql.ErrCodeNotExist)
 )
 
 // Registers error returned from TiKV.
@@ -57,6 +62,40 @@ var (
 	_ = dbterror.ClassTiKV.NewStd(mysql.ErrTruncatedWrongValue)
 	_ = dbterror.ClassTiKV.NewStd(mysql.ErrDivisionByZero)
 )
+
+//TiKVError is a normal error in tikv.
+type TiKVError struct {
+	code int
+	msg  string
+}
+
+// NewError creates a TiKVError
+func NewError(code int) *TiKVError {
+	return &TiKVError{
+		code: code,
+		msg:  "",
+	}
+}
+
+// Error implements the error interface.
+func (e *TiKVError) Error() string {
+	return fmt.Sprintf("code:%d,msg:%s", e.code, e.msg)
+}
+
+// Equal checks whether the errors are equal.
+func (e *TiKVError) Equal(other error) bool {
+	return strings.EqualFold(e.Error(), other.Error())
+}
+
+// Code returns error code.
+func (e *TiKVError) Code() int {
+	return e.code
+}
+
+// IsErrNotFound checks if err is a kind of NotFound error.
+func IsErrNotFound(err error) bool {
+	return ErrNotExist.Equal(err)
+}
 
 // ErrDeadlock wraps *kvrpcpb.Deadlock to implement the error interface.
 // It also marks if the deadlock is retryable.

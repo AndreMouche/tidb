@@ -25,7 +25,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -122,7 +121,7 @@ func (s *testAsyncCommitCommon) mustGetFromSnapshot(c *C, version uint64, key, e
 func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, key []byte) {
 	snap := s.store.GetSnapshot(version)
 	_, err := snap.Get(context.Background(), key)
-	c.Assert(errors.Cause(err), Equals, tidbkv.ErrNotExist)
+	c.Assert(errors.Cause(err), Equals, kv.ErrNotExist)
 }
 
 func (s *testAsyncCommitCommon) beginAsyncCommitWithLinearizability(c *C) tikv.TxnProbe {

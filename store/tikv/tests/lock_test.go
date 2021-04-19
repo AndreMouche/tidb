@@ -24,7 +24,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -506,9 +505,9 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	c.Assert(err, IsNil)
 	// transaction 1 is rolled back
 	_, err = txn.Get(context.Background(), []byte("k1"))
-	c.Assert(err, Equals, tidbkv.ErrNotExist)
+	c.Assert(err, Equals, kv.ErrNotExist)
 	_, err = txn.Get(context.Background(), []byte("k2"))
-	c.Assert(err, Equals, tidbkv.ErrNotExist)
+	c.Assert(err, Equals, kv.ErrNotExist)
 	// transaction 2 is committed
 	v, err := txn.Get(context.Background(), []byte("k3"))
 	c.Assert(err, IsNil)

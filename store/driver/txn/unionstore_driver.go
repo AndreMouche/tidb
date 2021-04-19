@@ -16,7 +16,6 @@ package txn
 import (
 	"context"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
@@ -28,7 +27,8 @@ type tikvBatchGetter struct {
 }
 
 func (getter *tikvBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	return getter.BufferBatchGetter.BatchGet(ctx, toTiKVKeys(keys))
+	data, err := getter.BufferBatchGetter.BatchGet(ctx, toTiKVKeys(keys))
+	return data, toTiDBErr(err)
 }
 
 // kvBatchGetter wraps kv.BatchGetter as unionstore.BatchGetter.
@@ -44,7 +44,8 @@ func newUnionstoreBatchGetter(g kv.BatchGetter) unionstore.BatchGetter {
 }
 
 func (g *kvBatchGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
-	return g.BatchGetter.BatchGet(ctx, toKVKeys(keys))
+	data, err := g.BatchGetter.BatchGet(ctx, toKVKeys(keys))
+	return data, toTiDBErr(err)
 }
 
 // kvGetter wraps kv.Getter as unionstore.Getter
@@ -60,7 +61,8 @@ func newUnionstoreGetter(g kv.Getter) unionstore.Getter {
 }
 
 func (g *kvGetter) Get(k []byte) ([]byte, error) {
-	return g.Getter.Get(context.Background(), k)
+	data, err := g.Getter.Get(context.Background(), k)
+	return data, toTiDBErr(err)
 }
 
 type tikvMemBuffer struct {
@@ -75,7 +77,8 @@ func newUnionstoreBatchBufferGetter(m kv.MemBuffer) unionstore.BatchBufferGetter
 }
 
 func (g *tikvMemBuffer) Get(k []byte) ([]byte, error) {
-	return g.MemBuffer.Get(context.Background(), k)
+	data, err := g.MemBuffer.Get(context.Background(), k)
+	return data, toTiDBErr(err)
 }
 
 // NewBufferBatchGetter creates a new BufferBatchGetter.
@@ -104,15 +107,18 @@ func (m *memBuffer) Delete(k kv.Key) error {
 }
 
 func (m *memBuffer) DeleteWithFlags(k kv.Key, ops ...tikvstore.FlagsOp) error {
-	return m.MemDB.DeleteWithFlags(k, ops...)
+	err := m.MemDB.DeleteWithFlags(k, ops...)
+	return toTiDBErr(err)
 }
 
 func (m *memBuffer) Get(_ context.Context, key kv.Key) ([]byte, error) {
-	return m.MemDB.Get(key)
+	data, err := m.MemDB.Get(key)
+	return data, toTiDBErr(err)
 }
 
 func (m *memBuffer) GetFlags(key kv.Key) (tikvstore.KeyFlags, error) {
-	return m.MemDB.GetFlags(key)
+	data, err := m.MemDB.GetFlags(key)
+	return data, toTiDBErr(err)
 }
 
 func (m *memBuffer) Staging() kv.StagingHandle {
@@ -135,11 +141,13 @@ func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, tikvsto
 }
 
 func (m *memBuffer) Set(key kv.Key, value []byte) error {
-	return m.MemDB.Set(key, value)
+	err := m.MemDB.Set(key, value)
+	return toTiDBErr(err)
 }
 
 func (m *memBuffer) SetWithFlags(key kv.Key, value []byte, ops ...kv.FlagsOp) error {
-	return m.MemDB.SetWithFlags(key, value, ops...)
+	err := m.MemDB.SetWithFlags(key, value, ops...)
+	return toTiDBErr(err)
 }
 
 // Iter creates an Iterator positioned on the first entry that k <= entry's key.
@@ -148,7 +156,7 @@ func (m *memBuffer) SetWithFlags(key kv.Key, value []byte, ops ...kv.FlagsOp) er
 // The Iterator must be Closed after use.
 func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	it, err := m.MemDB.Iter(k, upperBound)
-	return &tikvIterator{Iterator: it}, errors.Trace(err)
+	return &tikvIterator{Iterator: it}, toTiDBErr(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
@@ -157,7 +165,7 @@ func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 // TODO: Add lower bound limit
 func (m *memBuffer) IterReverse(k kv.Key) (kv.Iterator, error) {
 	it, err := m.MemDB.IterReverse(k)
-	return &tikvIterator{Iterator: it}, errors.Trace(err)
+	return &tikvIterator{Iterator: it}, toTiDBErr(err)
 }
 
 // SnapshotIter returns a Iterator for a snapshot of MemBuffer.
@@ -181,7 +189,8 @@ func (u *tikvUnionStore) GetMemBuffer() kv.MemBuffer {
 }
 
 func (u *tikvUnionStore) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	return u.KVUnionStore.Get(ctx, k)
+	data, err := u.KVUnionStore.Get(ctx, k)
+	return data, toTiDBErr(err)
 }
 
 func (u *tikvUnionStore) HasPresumeKeyNotExists(k kv.Key) bool {
@@ -194,7 +203,7 @@ func (u *tikvUnionStore) UnmarkPresumeKeyNotExists(k kv.Key) {
 
 func (u *tikvUnionStore) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	it, err := u.KVUnionStore.Iter(k, upperBound)
-	return newKVIterator(it), errors.Trace(err)
+	return newKVIterator(it), toTiDBErr(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
@@ -203,7 +212,7 @@ func (u *tikvUnionStore) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) 
 // TODO: Add lower bound limit
 func (u *tikvUnionStore) IterReverse(k kv.Key) (kv.Iterator, error) {
 	it, err := u.KVUnionStore.IterReverse(k)
-	return newKVIterator(it), errors.Trace(err)
+	return newKVIterator(it), toTiDBErr(err)
 }
 
 type tikvGetter struct {
@@ -215,7 +224,8 @@ func newKVGetter(getter unionstore.Getter) kv.Getter {
 }
 
 func (g *tikvGetter) Get(_ context.Context, k kv.Key) ([]byte, error) {
-	return g.Getter.Get(k)
+	data, err := g.Getter.Get(k)
+	return data, toTiDBErr(err)
 }
 
 // tikvIterator wraps unionstore.Iterator as kv.Iterator

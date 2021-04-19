@@ -386,7 +386,7 @@ func (s *KVSnapshot) Get(ctx context.Context, k []byte) ([]byte, error) {
 	}
 
 	if len(val) == 0 {
-		return nil, tidbkv.ErrNotExist
+		return nil, kv.ErrNotExist
 	}
 	return val, nil
 }

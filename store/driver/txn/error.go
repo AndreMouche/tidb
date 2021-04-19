@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/errno"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/table/tables"
@@ -145,7 +146,23 @@ func extractKeyErr(err error) error {
 		notFoundDetail := prettyLockNotFoundKey(e.Retryable)
 		return kv.ErrTxnRetryable.GenWithStackByArgs(e.Retryable + " " + notFoundDetail)
 	}
-	return errors.Trace(err)
+	return toTiDBErr(err)
+}
+
+func toTiDBErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	e, ok := errors.Cause(err).(*tikvstore.TiKVError)
+	if !ok {
+		return errors.Trace(err)
+	}
+	switch e.Code() {
+	case tikverr.ErrCodeNotExist:
+		return kv.ErrNotExist
+	}
+	// other errors
+	return err
 }
 
 func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {
