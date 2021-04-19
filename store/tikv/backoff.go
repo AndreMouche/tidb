@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/errno"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -195,7 +194,7 @@ func (t BackoffType) String() string {
 func (t BackoffType) TError() error {
 	switch t {
 	case BoTiKVRPC:
-		return kv.NewError(errno.ErrTiKVServerTimeout)
+		return kv.ErrTiKVServerTimeout
 	case BoTiFlashRPC:
 		return kv.ErrTiFlashServerTimeout
 	case BoTxnLock, BoTxnLockFast, boTxnNotFound:

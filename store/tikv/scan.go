@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -58,7 +57,7 @@ func newScanner(snapshot *KVSnapshot, startKey []byte, endKey []byte, batchSize 
 		nextEndKey:   endKey,
 	}
 	err := scanner.Next()
-	if tidbkv.IsErrNotFound(err) {
+	if kv.IsErrNotFound(err) {
 		return scanner, nil
 	}
 	return scanner, errors.Trace(err)

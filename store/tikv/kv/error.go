@@ -15,7 +15,6 @@ package kv
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -84,7 +83,10 @@ func (e *TiKVError) Error() string {
 
 // Equal checks whether the errors are equal.
 func (e *TiKVError) Equal(other error) bool {
-	return strings.EqualFold(e.Error(), other.Error())
+	if o, ok := errors.Cause(other).(*TiKVError); ok {
+		return o.Code() == e.Code()
+	}
+	return false
 }
 
 // Code returns error code.

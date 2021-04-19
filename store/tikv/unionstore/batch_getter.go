@@ -17,7 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 // BatchBufferGetter is the interface for BatchGet.
@@ -64,7 +64,7 @@ func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys [][]byte) (map[st
 			bufferValues[i] = val
 			continue
 		}
-		if !tidbkv.IsErrNotFound(err) {
+		if !kv.IsErrNotFound(err) {
 			return nil, errors.Trace(err)
 		}
 		if b.middle != nil {

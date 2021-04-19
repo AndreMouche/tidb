@@ -605,7 +605,7 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 	txn1, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, committer.GetStartTS()+2)
 	c.Assert(err, IsNil)
 	_, err = txn1.Get(bo.GetCtx(), []byte("x"))
-	c.Assert(tidbkv.IsErrNotFound(err), IsTrue)
+	c.Assert(kv.IsErrNotFound(err), IsTrue)
 
 	txn2, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, math.MaxUint64)
 	c.Assert(err, IsNil)
@@ -1137,7 +1137,7 @@ func (s *testCommitterSuite) TestPushPessimisticLock(c *C) {
 	elapsed := time.Since(start)
 	// The optimistic lock shouldn't block reads.
 	c.Assert(elapsed, Less, 500*time.Millisecond)
-	c.Assert(tidbkv.IsErrNotFound(err), IsTrue)
+	c.Assert(kv.IsErrNotFound(err), IsTrue)
 
 	txn1.Rollback()
 	txn2.Rollback()
