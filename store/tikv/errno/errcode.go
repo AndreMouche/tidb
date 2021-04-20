@@ -24,7 +24,8 @@ const (
 	ErrDataOutOfRange              = 1690
 	ErrLockAcquireFailAndNoWaitSet = 3572
 
-	ErrCodeNotExist = 8021
+	ErrCodeNotExist      = 8021
+	ErrCannotSetNilValue = 8023
 
 	// Error codes used by TiDB ddl package
 	ErrLockExpire = 8229

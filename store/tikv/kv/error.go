@@ -52,7 +52,8 @@ var (
 	ErrLockExpire                  = dbterror.ClassTiKV.NewStd(mysql.ErrLockExpire)
 	ErrUnknown                     = dbterror.ClassTiKV.NewStd(mysql.ErrUnknown)
 
-	ErrNotExist = NewError(mysql.ErrCodeNotExist)
+	ErrNotExist          = NewError(mysql.ErrCodeNotExist)
+	ErrCannotSetNilValue = NewError(mysql.ErrCannotSetNilValue)
 )
 
 // Registers error returned from TiKV.

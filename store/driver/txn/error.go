@@ -160,6 +160,8 @@ func toTiDBErr(err error) error {
 	switch e.Code() {
 	case tikverr.ErrCodeNotExist:
 		return kv.ErrNotExist
+	case tikverr.ErrCannotSetNilValue:
+		return kv.ErrCannotSetNilValue
 	}
 	// other errors
 	return err
